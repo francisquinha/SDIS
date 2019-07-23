@@ -1,0 +1,27 @@
+COMPILE
+'javac *.java'
+
+RUN PEER
+'java Peer <serverId> <version> <diskSpace> <controlIP> <controlPort> <backupIP> <backupPort> <restoreIP> <restorePort>'
+where:
+serverId must be a positive integer at most 65535;
+diskSpace is the available space for backup in thousands of bytes and must be a non negative long;
+version must be 1.0, 1.1, 1.2, 1.3, 1.4 or 2.0;
+controlPort, backupPort and restorePort must be distinct integer and valid port numbers in the range 49152 - 65535;
+controlIP, backupIP and restoreIP must be distinct valid multicast intranet IP addresses in the range 239.0.0.0-239.255.255.255.
+
+RUN TESTAPP
+'java TestApp <peerAP> <subProtocol> <opnd1> <opnd2>'
+where:
+peerAP is the peer access point and must be in one of formats ipAddress:portNumber, or :portNumber, or portNumber;
+subProtocol must be BACKUP, RESTORE, DELETE or RECLAIM;
+opnd1 is the path of the file in case of BACKUP, RESTORE and DELETE or the amount of space to RECLAIM;
+opnd2 is only used for BACKUP and is the desired replication degree.
+
+RUN WITH/WITHOUT ENHANCEMENTS
+version 1.0 - implements no enhancements;
+version 1.1 - implements the first enhancement (presented at the end of the chunk backup subprotocol);
+version 1.2 - implements the second enhancement (presented at the end of the chunk restore subprotocol);
+version 1.3 - implements the third enhancement (presented at the end of the file deletion subprotocol);
+version 1.4 - implements the fourth enhancement (presented at the end of the space reclaiming subprotocol);
+version 2.0 - implements all four enhancements.

@@ -1,0 +1,8 @@
+Por dificuldades de teste em WAN, surgiu um bug numa das versões finais do projeto. Apercebemos-nos disso e decidimos alterar, mas a entrega final ficou atrasada cerca de 1h por causa disso. 
+Se for mesmo avaliado o projeto às 23h55, então não existe o diretório ENTREGA FINAL, pelo que deve ser considerada a versão dessa hora que estiver na raiz.
+
+Dado que na FEUP não é possível usar UPnP, para efeitos de demonstração, existe uma constante LAN_MODE, que estando a true faz com que apenas funcione em LAN. 
+Para correr em WAN é necessário colocar LAN_MODE a false.
+
+Após a entrega, encontramos pequenos bugs, que foram corrigidos antes da demonstração, e estão na pasta POS_ENTREGA.
+

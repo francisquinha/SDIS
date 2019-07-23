@@ -1,0 +1,21 @@
+Script started on Mon Mar 28 23:36:53 2016
+[?1034hbash-3.2$ java Peer 3333 1.0 256 239.1.1.1 51111 239.2.2.2 52222 239.3.3.3 53333
+Backup Service at IP Address 192.168.2.184 and Port 3333
+Multicast Control at IP Address 239.1.1.1 and Port 51111
+Multicast Data Backup at IP Address 239.2.2.2 and Port 52222
+Multicast Data Restore at IP Address 239.3.3.3 and Port 53333
+Use Enter to stop Peer...
+IN: PUTCHUNK 1.0 1111 327bcc1e82eef4e96f999e295098959416ffc572b92e45493e9b6b0296cd0d6f 0 2
+OUT: STORED 1.0 3333 327bcc1e82eef4e96f999e295098959416ffc572b92e45493e9b6b0296cd0d6f 0
+IN: STORED 1.0 3333 327bcc1e82eef4e96f999e295098959416ffc572b92e45493e9b6b0296cd0d6f 0
+IN: STORED 1.0 2222 327bcc1e82eef4e96f999e295098959416ffc572b92e45493e9b6b0296cd0d6f 0
+
+Stopping Multicast...
+Closing multicast socket
+Closing multicast socket
+Closing multicast socket
+Stopping Service...
+bash-3.2$ exit
+exit
+
+Script done on Mon Mar 28 23:38:25 2016

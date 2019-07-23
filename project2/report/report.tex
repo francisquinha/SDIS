@@ -1,0 +1,318 @@
+\documentclass[11pt]{article}
+
+\usepackage{graphicx}
+\usepackage[utf8]{inputenc}
+\usepackage{hyperref}
+\usepackage{listings}
+\usepackage{verbatim}
+\usepackage{xcolor}
+\usepackage[top=2.5cm, bottom=2.5cm, left=2.5cm, right=2.5cm]{geometry}
+\lstset{basicstyle=\ttfamily,
+  showstringspaces=false,
+  commentstyle=\color{red},
+  keywordstyle=\color{blue}
+}
+
+\begin{document}
+\title{\Huge\textbf{Project 2 - Distributed Backup Service in P2P Network}\linebreak\linebreak\linebreak\linebreak
+\Large\textbf{Final Report}\linebreak\linebreak\linebreak\linebreak\linebreak
+\includegraphics[scale=0.1]{feup-logo.png}\linebreak\linebreak
+\linebreak\linebreak
+\Large{Mestrado Integrado em \linebreak Engenharia Informática e Computação} \linebreak\linebreak
+\Large{Sistemas Distribuidos}\linebreak\linebreak
+\large{Turma 6 Grupo 02}\linebreak
+}
+
+\author{
+Ângela Cardoso\\ up200204375\\
+\and
+Diogo Pereira\\ up201305602\\
+\and
+Gonçalo Lopes\\ up201303198\\
+\and
+Ivo Fernandes\\ up201303199\\
+}
+\date{\today}
+\maketitle
+\thispagestyle{empty}
+\newpage
+\tableofcontents
+\newpage
+
+\section{Introduction}
+The objective of this project is to develop a distributed backup service for a \textit{wide area network} \textbf{(WAN)} based on the \textit{peer-to-peer} \textbf{(P2P)} application architecture. The idea is to make use of the free disk space of computers for backing up files from system users. The service is provided by peers who are part of a chord network and can be located in different \textit{local area networks} \textbf{(LANs)} as long as the routers that connect those LANs to the outside allow \textit{universal plug and play} \textbf{(UPnP)}.
+
+In this report we will explain in detail the approach used to solve the problems
+related to the implementation of the project.
+
+\section{Distributed Hash Table - The chord}
+\subsection{peer lookup}
+One of the most important issues that needs to be tackled when implementing a P2P application is managing and locating the peers. To achieve this, we follow the chord \textit{Distributed Hash Table} \textbf{(DHT)}. 
+
+We will not enter into the specific implementation of the chord on this report, since it is described in~\cite{chord_paper}. The pseudo-code on this paper was used for our code implementation.
+
+One of the most important characteristics of the chord is that to locate a peer with key \verb|K|, on a chord with a maximum of \verb|N| peers, a maximum of \verb|log(N)| hops is required. For a large \verb|N|, this drastically increases lookup performance. 
+
+A peer on the chord also keeps a pointer to its predecessor, and a list of pointers to its successors. We used these pointers to implement replication, as we discuss ahead.
+
+\subsection{peer join}
+In order to join the network, a peer needs to know an entry-point, the IP address of a peer that already belongs to the network. 
+
+When starting a peer, the user can either specify a key, or receive a random one. When specifying a key, if that key is already filled in by a peer on the chord, the user receives an error, saying the key already exists. If the user does not specify a key, the program will first connect to the entry-point and ask the max number of peers allowed on the network. Then, it generates an array of \verb|N| integers, and shuffles the array. After that, the peer tries to connect to the network with one key at a time. If all keys are full, the program outputs a message saying the network is full. The array is shuffled so that peers are evenly distributed on the chord.
+
+After joining, the peer uses \verb|chordNotify()| (see~\cite{chord_paper}), notifying its successor that it is its new predecessor. The \verb|stabilize()|, \verb|fixFingers()| and \verb|checkPredecessor()| functions (also specified in~\cite{chord_paper}) are periodically executed to fix possible inconsistencies with the fingerTable, successors and predecessor, caused by peer departures and failures. The function \verb|chordNotify()| also returns the predecessor's successors, so that the peer joining the chord may update its list faster. 
+
+\section{Replication}
+Before getting into the backup, restore and deletion sections, we will briefly explain how we tackled Replication, entering into details for each protocol on their specific sections. 
+
+Similarly to the first project, a file has a \verb|file_id| and it is split into chunks. To know where a chunk is or is supposed to be located at, the chunk's corresponding peer key \verb|K| needs to be calculated. \verb|K = (file_id + chunk_no) % N|. This ensures that chunks are evenly distributed across the network.
+
+Locating chunks becomes an issue when peers do not have enough space. To prevent chunks from being unreachable, a peer stores information about a chunk being saved or not, so that it can forward the request about the chunk to its successor.  
+
+To replicate a chunk with replication degree \verb|R|, the chunk holder makes a recursive call to its successor, asking it to store the chunk with replication degree \verb|R - 1|. This process is repeated until the replication degree is either met, or there aren't enough peers (or enough peers with available space) to satisfy the replication degree.
+
+To keep consistency, when a peer joins the network, it must copy the chunks of another peer. For example, suppose that a chord consists of peers 1 and 5 and that peer 3 enters the chord. Then peer 3 must receive from peer 5 all the chunks whose key is between 3 and 5. Hence, peer 3 makes a \verb|releaseChunk(Chunk)| call, which recursively calls successors until it finds a peer that either:
+\begin{itemize}
+\item Doesn't know the chunk, and the call ends;
+\item Has the chunk, and the chunk's saved \verb|rep_degree| is 1, which means that this is the last peer to have the chunk, and that the desired replication degree is met. This peer then deletes the chunk, because the chunk's current replication degree is larger than the desired replication degree. If a peer did release the chunk, when the recursive call travels back through the successor chain, all peers decrement their chunk's replication degree, to update their position on the chain.
+\end{itemize}
+
+When a peer receives a new successor, it also sends to it the chunks whose replication degree are higher than 1, because they should belong to the new successor. This corrects any error that might have occurred when the old successor sent its chunks to the new successor (because it is its predecessor). 
+
+Both of these actions utilize \verb|putChunk()| instead of \verb|storeChunk()|. The difference is that \verb|putChunk()| retrieves the chunk's body from the network if it does not receive it. This covers the case when a peer joins the network between two peers that have no space for chunks, which means these peers will send the chunks without body, using the \verb|putChunk()| call.
+
+What if two peers join at the same time? Both \verb|chordNotify()| and \verb|setSuccessor()| are synchronized methods, so that the successor or predecessor receiving the chunks does not suddenly change. If the methods were not synchronized, this would mean that for two peers joining the network at the same time, connecting to the same peer, none of them would receive all the chunks, but only a part of them. 
+
+\subsection{Failure}
+When a peer's successor or predecessor fails, chunk replication is maintained when the peer receives a new successor or predecessor. 
+
+If, for some reason, the chunks replication degree goes below the desired degree, and this isn't detected, perhaps because one of the chunks in the successor chain crashed while the recursive call after a peer departure is active, the \verb|checkChunkReplication()| function, which is periodically executed, performs the same actions that are taken when a node joins or leaves. However, the actions are only called for chunks by the peers that have the chunks' bodies. Also, the chunks' \verb|last\_check| must have occurred longer than the \textit{check\_delay}. The \verb|last\_check| value is used to prevent a chunk from getting checked by multiple peers at the same time, which would unnecessarily flood the network.
+
+The function \verb|checkChunkReplication()| also releases chunks when they are above the replication degree.
+
+\subsection{Unreachable chunks}
+Seeing how the chord works, there's an issue with unreachable chunks. If a peer has a chunk that is unreachable, it should delete it.
+
+\textit{How to detect a chunk is unreachable?}
+
+Periodically, a peer calls \verb|checkUnreachableChunks()|.
+\begin{enumerate}
+\item If the chunk's desired replication degree is 1, it does not perform any check, and does not delete the chunk.
+\item Calculates, the first peer has the chunk, the \verb|Chunk Holder|.
+\begin{itemize}
+\item If the \verb|Chunk Holder| does not exist, this peer failed to receive the delete message for the chunk. The peer then deletes the chunk.
+\item If the \verb|Chunk Holder| exists and is not the peer checking the chunk, the peer asks its predecessor if it knows the chunk. If it doesn't, the peer deletes the chunk.
+\item If the \verb|Chunk Holder| exists, and is the peer checking the chunk, the chunk is not deleted.
+\end{itemize}
+\end{enumerate}
+
+If a peer deletes a chunk when it shouldn't have, maybe because its predecessor hadn't completely received its chunks, and did not yet know of the chunk, \verb|checkChunkReplication()| will later fix the issue.
+
+What if the peer just revived, and is the Chunk Holder but, the chunk had been deleted from the network? We fix this by having a different \verb|checkUnreachableRevive()| method. This method is executed 2 times. The \verb|checkChunkReplication()| and \verb|checkUnreachableChunks()| methods only start being periodically executed after \verb|checkUnreachableRevive()| is executed twice. If this does not happen, the peer will wrongly reintroduce an already deleted chunk to the network. Besides only starting the periodic checks after the revive check, the peer only sends chunks to successors or predecessors on \verb|setSuccessor()| and \verb|chordNotify()| if the peer has revived already.
+
+
+\subsection{The recursive calls}
+An important issue with the recursive calls is that, if the calls lap around the chord and go into an infinite loop. We fixed this issue by adding an \verb|ArrayList<Integer>| to the recursive calls. The first action when executing one of these calls, is checking if the peer's \verb|guid| is already on the received list. If it isn't, the peer adds its \verb|guid| to the list, and makes the call to the successor. This prevents calls from looping.
+
+What if peers crash or join the network while the call is active, and this prevents the call from reaching all successors? This is fixed by using the periodical \verb|checkChunkReplication()| and \verb|checkUnreachableChunks()| calls.
+
+\subsection{The network load}
+Since the chord needs to keep calling certain methods to keep balanced, and some of these methods have to send chunks through the network, the load might be too high. If there is knowledge about how often peers are expected to join/leave the network, and how high replication degrees are, the time intervals to call the ``balancing methods'' may increase or decrease, keeping consistency and changing network load accordingly. 
+
+\section{File Backup}
+To backup a chunk, the chunk's corresponding key must be calculated, as explained in the Replication section. After that, the peer calling the backup for the chunk locates the peer corresponding to the chunk's key and asks that peer to store the chunk with a desired replication degree.
+
+When a peer is asked to store a chunk, it checks if it has enough space. If there isn't enough space to store the chunk, the peer keeps information about the chunk, as well as setting the \verb|status| value to 0 meaning it didn't store the chunk. The peer then forwards the request to its successor, keeping the chunk's \verb|rep\_degree|. 
+
+If the peer has enough space to store the chunk, it will decrement the \textit{rep\_degree} and forward the request to its successor.
+
+The backup ends when either:
+\begin{itemize}
+\item The \verb|rep\_degree| value reaches 1 and is stored on a peer
+\item The first peer to ask for the chunk's backup receives the backup request for said chunk from its predecessor. This means there weren't enough peers on the network to store the chunk with the desired replication degree. The backup call must end, otherwise it becomes an infinite loop.
+\end{itemize}
+
+\section{File Restore}
+To restore a chunk, after calculating the chunk's corresponding key and the peer corresponding to that key, a restore call is made. 
+
+\begin{itemize}
+\item If the peer does not have any information on the chunk, the call stops. This prevents infinite loops.
+\item If the peer has information about the chunk, but does not have its body, it forwards the request to the successor.
+\item If the peer has the chunk's body, it returns its \verb|peerInterface| through the recursive call. This is done so that the chunk does not have to be transferred through all the peers. After receiving the chunk holder's \verb|peerInterface|, the client asks it for the chunk.
+\end{itemize}
+
+\section{File Deletion}
+To delete a chunk, after calculating the chunk's corresponding key and the peer corresponding to that key, a delete call is made. 
+
+\begin{itemize}
+\item If the peer has any information about the chunk, it deletes it and forwards the request.
+\item If the peer does not have any information about the chunk, it does not forward the request.
+\end{itemize}
+
+\section{Security}
+
+\subsection{User authentication}
+To ensure that only the user that inserted the file into the network can retrieve it we implemented a username-password authentication system, an usage example would be:
+\begin{enumerate}
+\item User registers into the network with username and password, his encrypted metadata is stored in the network with replication degree 3.
+\item User backs up example.txt file
+\item User asks to restore of example.txt file
+\item User metadata is retrieved from network and decrypted using a key generated from username and password, it is verified if the file is registered to the user and if it is the restore process starts.
+\end{enumerate}
+In the client metadata we store a hashmap that has the file name as the key and file metadata as the value. 
+
+The file metadata consists of the file identifier that is generated when the file is backed up, as well as the number of chunks that the file was split into.
+
+By storing this information we ensure that only the user that backed up the file can retrieve it, the possible attacks are:
+\begin{itemize}
+\item trying to guess the username and password combo using brute force to access a specific user's files.
+\item reverse engineer the the communication between peer and Client to obtain file identifiers and then simulate the communication between peer and client.
+\end{itemize}
+
+Even if the attacker had the skills to reverse engineer the communication between the Client and the peer the file received would be encrypted and the decryption key is generated from the username and password of the user that backed up the file, turning all that data useless. The most damage that could be done would be for the attacker, after being able to manipulate communication, to delete files as only the file identifier is necessary. 
+\subsection{Confidentiality}
+When a file is being backed up into the network all its chunks are encrypted using a key generated from the username and password of the user, this ensures that people with access to the file system of various peers would not be able to recreate any files without knowing the username and password of the user that backed them up.
+
+
+\section{Port Mapping}
+So participants in the system can communicate with each other when they are part of different LANs we use the library Cling which provides an API for UPnP services, the system creates a port mapping on all NAT routers on a network, the ports mapped are 1099 and 1100 that are used in RMI communication. For this method to work the network routers must permit UPnP.
+We successfully managed to implement UPnP port forwarding and are able to communicate with peers in different LANs and clients accessing through different LANs.
+
+The only problem we could not get through was multiple peers in the same computer communicating with different LANs. To test WAN operability of our application it is necessary to only run one peer per computer. 
+
+We added a constant \textit{LAN\_MODE} that removes all the port forwarding and setting of the rmi server hostname system property, we submitted with code with this constant to true so that we are able to run the project in FEUP, to test in a WAN this constant must be false. 
+
+\section{User Manual}
+
+So that you can be able to run our \textit{Application}, you have to complete the following steps, depending on your Operating System (\textbf{Windows} or \textbf{Linux}).
+
+First of all it is necessary to put all the \textit{Cling} (\textit{API} used to do \textit{Port Mapping} and to implement \textit{UPnP}) \textit{jars} in the same folder of \textit{src} packages (\textit{test}, \textit{client}, \textit{peer} and \textit{utils}). You can find it through our svn repository (\url{https://redmine.fe.up.pt/projects/sdis1516-t6g02-p2/documents}).
+
+Next, depending on your OS, open the \textit{command terminal} and navigate to \textit{src} folder, where there are present all the Application packages and \textit{jars}.
+\begin{itemize}
+\item \textbf{Windows}
+\begin{itemize}
+Because of our communication protocol being done in \textit{RMI (Remote Method Invocation)}, firstly you have to start \textit{rmiregistry}. This can be made like this:
+\begin{lstlisting}
+start rmiregistry
+\end{lstlisting}
+\item Then, to compile, run the following commands: 
+\begin{lstlisting}
+dir /s /B *.java > sources.txt
+\end{lstlisting}
+\begin{lstlisting}
+javac -cp ".;*" @sources.txt
+\end{lstlisting}
+\item Finally, to launch the Application, run the following command:
+\begin{lstlisting}
+java -cp ".;*" client.ClientStart
+\end{lstlisting}
+\end{itemize}
+\item \textbf{Linux}
+\begin{itemize}
+\item To start \textit{rmiregistry}:
+\begin{lstlisting}
+rmiregistry &
+\end{lstlisting}
+\item To compile: 
+\begin{lstlisting}
+javac -cp ".:*" */*.java
+\end{lstlisting}
+\item To launch the Application:
+\begin{lstlisting}
+java -cp ".:*" client.ClientStart
+\end{lstlisting}
+\end{itemize}
+\end{itemize}
+From now onwards, everything is equal independently of your OS, except the \verb|".:*"| token after \textit{"java[c] -cp"}. If your OS is \textbf{Windows} use \verb|".;*"|, else if is \textbf{Linux} use \verb|".:*"|.\\
+\\
+So upon launching the Application, a message \textit{"Dear User, please enter the commands:"} will appear.\\
+These commands could be:
+\begin{itemize}
+\item 
+\begin{lstlisting}
+<sub_protocol> <opnd_1> (<opnd\_2>)?
+ (<access_point>:<access_point_key>)?
+\end{lstlisting}
+Where:\\
+\textbf{[sub\_protocol]} is either \textit{BACKUP}, \textit{RESTORE} or \textit{DELETE}.\\
+\textbf{[opnd\_1]} is the filename to \textit{BACKUP}, \textit{RESTORE} or \textit{DELETE}.\\
+\textbf{[opnd\_2]} is the file's replication degree if the subprotocol chosen is \textit{BACKUP}.\\
+\textbf{[access\_point]} is the internal host \textit{IP address}.\\
+\textbf{[access\_point\_key]} is the internal host \textit{guid}.\\
+\item
+\begin{lstlisting}
+<action> <username> <password>
+ <access_point>:<access_point_key>
+\end{lstlisting}
+Where:\\
+\textbf{[action]} is REGISTER or LOGIN.\\
+\textbf{[username]} is the client's (files' owner) username.\\
+\textbf{[password]} is the client's password.\\
+\textbf{[access\_point]} is the internal host \textit{IP address}.\\
+\textbf{[access\_point\_key]} is the host \textit{guid}.
+\end{itemize}
+
+But, before testing any \textit{subprotocol} available (Backup, Restore or Delete), i.e, launching any subprotocol command-related referred above, you have to \textbf{create} a \textit{chord} with many \textbf{peers} in order to test the \textit{Protocols} implemented, like \textit{Backup}, \textit{Restore} or even \textit{Delete} files. 
+\\
+\textbf{Note:} Each peer joining or creation must be done in separated \textit{command terminals}.\\
+\\
+To \textbf{create}, just type:
+\begin{lstlisting}
+java -cp ".;*" peer.peerStart [name] create [max_peers] [space]
+\end{lstlisting}
+Where:\\
+\\
+\textbf{[name]} is the peer's name and its folder name, where it will store files.\\
+\textbf{[max\_peers]} is the number maximum of peers of that chord. This number must be multiple of 2.\\
+\textbf{[space]} is the peer's space available to store files.\\
+\\
+If you would like to \textbf{join} a \textbf{peer} to a specific \textit{chord}, you have two ways to accomplish that:\\
+\begin{itemize}
+\item \textit{Join known chord and receive a random key}
+\end{itemize}
+\begin{lstlisting}
+java -cp ".;*" peer.peerStart [name] join [known_host] [known_host_key]	 [space]
+\end{lstlisting}
+\textbf{or}
+\begin{itemize}
+\item \textit{Join known chord with given key}
+\end{itemize}
+\begin{lstlisting}
+java -cp ".;*" peer.peerStart [name] join [known_host] [known_host_key]	[key]   [space]
+\end{lstlisting}
+Where:\\
+\\
+\textbf{[name]} is the peer's name and its folder name, where it will store files.\\
+\textbf{[known\_host]} is the \textit{chord} access point.\\
+\textbf{[known\_host\_key]} is the \textit{chord} access point \textit{guid (Global Unique Identifier)}, which is the remote object's name.\\
+\textbf{[given\_key]} is the \textit{guid} to  join (the \textit{chord}) with.\\
+\textbf{[space]} is the peer's space available to store files.\\
+\\
+
+\section{Effort Distribution}
+
+\paragraph{Ângela Cardoso}
+Chord network and protocol implementation
+
+\paragraph{Diogo Pereira}
+Client side development
+
+\paragraph{Gonçalo Lopes}
+Chord network and protocol implementation
+
+\paragraph{Ivo Fernandes}
+Protocol implementation, port forwarding
+
+
+
+
+
+%%%%%%%%%%%%%%%%
+% BIBLIOGRAPHY %
+%%%%%%%%%%%%%%%%
+\bibliographystyle{IEEEtran}
+\nocite{*}
+\bibliography{refs}
+
+\end{document}
